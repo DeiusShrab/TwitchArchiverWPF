@@ -54,8 +54,9 @@ namespace TwitchArchiverWPF
     PageVods pageVods = new PageVods();
     PageSettings pageSettings = new PageSettings();
     BackgroundWorker backgroundWorker = new BackgroundWorker();
+    ILogger mainLogger = new LoggerConfiguration().WriteTo.File(Path.Combine(Environment.CurrentDirectory, $"{DateTime.Now.ToString(datePattern)}.log")).CreateLogger();
 
-    [DllImport("Kernel32")]
+  [DllImport("Kernel32")]
     public static extern void AllocConsole();
     public static string datePattern = @"yyyy-MM-dd HH:mm:ss";
 
@@ -97,10 +98,11 @@ namespace TwitchArchiverWPF
           foreach (var streamer in streamerList)
           {
             //Check if streamer is live every x seconds setting
-            if ((streamer.OverrideRecordingSettings && checkCount % streamer.RecordingSettings.LiveCheck == 0) || (!streamer.OverrideRecordingSettings && checkCount % globalSettings.RecordingSettings.LiveCheck == 0))
+            int liveCheck = streamer.OverrideRecordingSettings ? streamer.RecordingSettings.LiveCheck : globalSettings.RecordingSettings.LiveCheck;
+            if (checkCount % liveCheck == 0)
             {
               bool updatedToken = true;
-              if (!accessTokens.ContainsKey(streamer.Id) || DateTime.Now.CompareTo(accessTokens[streamer.Id].expires.AddMinutes(-5)) > 0)
+              if (!accessTokens.ContainsKey(streamer.Id) || DateTime.Now.CompareTo(accessTokens[streamer.Id].expires.AddMinutes(-5).AddSeconds(liveCheck * -1)) > 0)
               {
                 updatedToken = RefreshToken(streamer, accessTokens, globalSettings);
               }
@@ -110,7 +112,13 @@ namespace TwitchArchiverWPF
               {
                 try
                 {
-                  Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - CHECKING {streamer.Name}");
+                  LogInformation($"CHECKING {streamer.Name}");
+                  if (broadcastList.Values.Any(x => x.StreamerId == streamer.Id && !x.DownloadTask.IsCompleted))
+                  {
+                    LogInformation($"{streamer.Name} is still LIVE");
+                    continue;
+                  }
+
                   using WebClient playlistClient = new WebClient();
                   playlistClient.Headers.Add("Accept", "application/x-mpegURL, application/vnd.apple.mpegurl, application/json, text/plain");
                   playlistClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0");
@@ -131,16 +139,15 @@ namespace TwitchArchiverWPF
 
                   if (!broadcastList.ContainsKey(streamId) && streamQuality.Contains("(source)"))
                   {
-                    Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - DETECTED {streamer.Name} LIVE");
+                    LogInformation($"DETECTED {streamer.Name} LIVE");
                     Task downloadTask = Task.Run(() => DownloadTask(streamer, globalSettings, playlist, streamId, startTime));
                     broadcastList.Add(streamId, new Broadcast(streamId, streamer.Id, downloadTask));
                   }
-                  else
-                  {
-                    Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Already tracking {streamer.Name}");
-                  }
                 }
-                catch (WebException) { }
+                catch (WebException ex)
+                {
+                  LogError(ex, "WebException");
+                }
               }
             }
           }
@@ -168,12 +175,12 @@ namespace TwitchArchiverWPF
 
       if (!Directory.Exists(downloadFolder))
         Directory.CreateDirectory(downloadFolder);
-      using Logger logger = new LoggerConfiguration().WriteTo.File(Path.Combine(downloadFolder, "log.txt")).CreateLogger();
+      using Logger downloadLogger = new LoggerConfiguration().WriteTo.File(Path.Combine(downloadFolder, $"{DateTime.Now.ToString(datePattern)}.log")).CreateLogger();
 
       try
       {
         Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Detected {streamer.Name} LIVE");
-        logger.Information($"Detected {streamer.Name} LIVE");
+        downloadLogger.Information($"Detected {streamer.Name} LIVE");
         List<string> livePartsList = new List<string>();
 
         CancellationTokenSource liveCancel = new CancellationTokenSource();
@@ -191,6 +198,7 @@ namespace TwitchArchiverWPF
 
         if (streamer.DownloadOptions.DownloadLiveStream && streamer.DownloadOptions.DownloadLiveChat)
         {
+          Exception e = null;
           int tryCount = 0;
           while (firstPlaylist == null && tryCount < 5)
           {
@@ -203,6 +211,11 @@ namespace TwitchArchiverWPF
               tryCount++;
               Thread.Sleep(1000);
             }
+          }
+
+          if (firstPlaylist == null)
+          {
+            LogError(e, $"Failed to download after {tryCount} attempts");
           }
         }
 
@@ -219,7 +232,7 @@ namespace TwitchArchiverWPF
               if (oldFiles.Count > 0)
               {
                 Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Detected previous stream segments, moving to \"old\" folder to prevent gap in stream");
-                logger.Information("Detected previous stream segments, moving to \"old\" folder to prevent gap in stream");
+                downloadLogger.Information("Detected previous stream segments, moving to \"old\" folder to prevent gap in stream");
                 if (!Directory.Exists(oldFilesDirectory))
                   Directory.CreateDirectory(oldFilesDirectory);
 
@@ -235,20 +248,22 @@ namespace TwitchArchiverWPF
                     {
                       File.Delete(oldFile);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                      LogError(ex, $"Exception deleting {oldFile}");
+                    }
                   }
                 }
               }
             }
             catch (Exception ex)
             {
-              logger.Error("Error moving previous segments to \"old\" folder: " + ex);
-              Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Error moving previous segments to \"old\" folder: ");
-              Console.WriteLine(ex);
+              downloadLogger.Error("Error moving previous segments to \"old\" folder: " + ex);
+              LogError(ex, "Error moving previous segments to \"old\" folder");
             }
           }
 
-          liveTask = Task.Run(() => DownloadLiveTask(playlistUrl, firstPlaylist, livePartsList, liveDirectory, logger, liveCancel.Token));
+          liveTask = Task.Run(() => DownloadLiveTask(playlistUrl, firstPlaylist, livePartsList, liveDirectory, downloadLogger, liveCancel.Token));
         }
 
         if (streamer.DownloadOptions.DownloadLiveChat)
@@ -283,7 +298,7 @@ namespace TwitchArchiverWPF
                   //VOD doesn't exist
 
                   Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - No associated VOD with stream, streamer maybe has VODs disabled");
-                  logger.Error($"No associated VOD with stream, streamer maybe has VODs disabled");
+                  downloadLogger.Error($"No associated VOD with stream, streamer maybe has VODs disabled");
                   gotVod = true;
                 }
                 else if (streamInfo.data.user.stream.archiveVideo.id != null)
@@ -294,18 +309,18 @@ namespace TwitchArchiverWPF
                     if (!Directory.Exists(vodDirectory))
                       Directory.CreateDirectory(vodDirectory);
 
-                    string? vodplaylistUrl = GetVodPlaylistUrl(vodId, streamer, globalSettings, logger);
+                    string? vodplaylistUrl = GetVodPlaylistUrl(vodId, streamer, globalSettings, downloadLogger);
                     if (vodplaylistUrl != null)
                     {
                       Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Got VOD playlist URL " + vodplaylistUrl);
-                      logger.Information("Got VOD playlist URL " + vodplaylistUrl);
+                      downloadLogger.Information("Got VOD playlist URL " + vodplaylistUrl);
                       gotVod = true;
                       vodTask = Task.Run(() => DownloadVodTask(vodplaylistUrl, vodDirectory, vodId, vodCancel.Token));
                     }
                     else
                     {
                       Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Unable to get VOD playlist (Sub Only VOD?)");
-                      logger.Error("Unable to get VOD playlist (Sub Only VOD?)");
+                      downloadLogger.Error("Unable to get VOD playlist (Sub Only VOD?)");
                       //Start VOD task to check when VOD has ended to download chat
                       vodTask = Task.Run(() => DownloadVodTask(null, vodDirectory, vodId, vodCancel.Token));
                       gotVod = true;
@@ -345,17 +360,17 @@ namespace TwitchArchiverWPF
                         if (!Directory.Exists(vodDirectory))
                           Directory.CreateDirectory(vodDirectory);
 
-                        string? vodplaylistUrl = GetVodPlaylistUrl(vodId, streamer, globalSettings, logger);
+                        string? vodplaylistUrl = GetVodPlaylistUrl(vodId, streamer, globalSettings, downloadLogger);
                         if (vodplaylistUrl != null)
                         {
                           Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Got VOD playlist URL " + vodplaylistUrl);
-                          logger.Information("Got VOD playlist URL " + vodplaylistUrl);
+                          downloadLogger.Information("Got VOD playlist URL " + vodplaylistUrl);
                           vodTask = Task.Run(() => DownloadVodTask(vodplaylistUrl, vodDirectory, vodId, vodCancel.Token));
                         }
                         else
                         {
                           Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Unable to get VOD playlist");
-                          logger.Error("Unable to get VOD playlist");
+                          downloadLogger.Error("Unable to get VOD playlist");
                         }
                       }
                       break;
@@ -367,7 +382,7 @@ namespace TwitchArchiverWPF
               if (!found)
               {
                 Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Unable to find associated VOD with stream");
-                logger.Error($"Unable to find associated VOD with stream");
+                downloadLogger.Error($"Unable to find associated VOD with stream");
               }
             }
 
@@ -399,7 +414,10 @@ namespace TwitchArchiverWPF
             streamMetadata.Length = (int)TimeSpan.FromTicks((long)timeTicks).TotalSeconds;
           }
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in DownloadTask near VodTask");
+        }
 
         List<Task> renderTasks = new List<Task>();
 
@@ -424,7 +442,7 @@ namespace TwitchArchiverWPF
               chatDownloader.DownloadAsync(new Progress<ProgressReport>(), new CancellationToken()).Wait();
               streamMetadata.VodChatPath = Path.GetRelativePath(finalFolder, Path.Combine(finalFolder, "VOD", "vod_chat.json"));
               Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Downloaded VOD chat");
-              logger.Information("Downloaded VOD chat");
+              downloadLogger.Information("Downloaded VOD chat");
 
               if ((!streamer.OverrideRenderSettings && globalSettings.RenderSettings.RenderChat && (globalSettings.RenderSettings.RenderPrefrence == RenderPrefrence.VOD || globalSettings.RenderSettings.RenderPrefrence == RenderPrefrence.Both)) || (streamer.OverrideRenderSettings && streamer.RenderSettings.RenderChat && (streamer.RenderSettings.RenderPrefrence == RenderPrefrence.VOD || streamer.RenderSettings.RenderPrefrence == RenderPrefrence.Both)))
               {
@@ -462,15 +480,15 @@ namespace TwitchArchiverWPF
                 }
                 catch (Exception ex)
                 {
-                  Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Chat render error: " + ex.Message);
-                  logger.Error("Chat render error: " + ex);
+                  LogError(ex, "Chat render error: " + ex.Message);
+                  downloadLogger.Error("Chat render error: " + ex);
                 }
               }
             }
             catch (Exception ex)
             {
-              Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Error downloading VOD chat: " + ex.Message);
-              logger.Error("Error downloading VOD chat: " + ex);
+              LogError(ex, "Error downloading VOD chat: " + ex.Message);
+              downloadLogger.Error("Error downloading VOD chat: " + ex);
             }
           });
           renderTasks.Add(t);
@@ -497,7 +515,10 @@ namespace TwitchArchiverWPF
               streamMetadata.Length = videoLength;
           }
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in DownloadTask near LiveTask");
+        }
 
         try
         {
@@ -542,19 +563,19 @@ namespace TwitchArchiverWPF
               }
               catch (Exception ex)
               {
-                Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Live chat render error: " + ex.Message);
-                logger.Error("Live chat render error: " + ex);
+                LogError(ex, "Live chat render error: " + ex.Message);
+                downloadLogger.Error("Live chat render error: " + ex);
               }
             });
             renderTasks.Add(t);
           }
         }
-        catch
+        catch (Exception ex)
         {
+          LogError(ex, "Live chat error: " + liveChatTask?.Exception ?? "LiveChatTask NULL");
           if (liveChatTask != null && liveChatTask.IsFaulted && liveChatTask.Exception != null)
           {
-            Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Live chat error: " + liveChatTask.Exception);
-            logger.Error("Live chat error: " + liveChatTask.Exception);
+            downloadLogger.Error("Live chat error: " + liveChatTask.Exception);
           }
         }
 
@@ -572,7 +593,10 @@ namespace TwitchArchiverWPF
             }
           }
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in DownloadTask near InfoTask");
+        }
 
         File.WriteAllText(Path.Combine(downloadFolder, "metadata.json"), JsonConvert.SerializeObject(streamMetadata));
 
@@ -580,17 +604,20 @@ namespace TwitchArchiverWPF
         {
           Task.WaitAll(renderTasks.ToArray());
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in DownloadTask near RenderTasks");
+        }
 
         Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Finished downloading");
-        logger.Information("Finished downloading");
+        downloadLogger.Information("Finished downloading");
 
         if (!Directory.Exists(finalFolder))
           Directory.CreateDirectory(finalFolder);
 
         DirectoryCopy(downloadFolder, finalFolder, true);
 
-        logger.Dispose();
+        downloadLogger.Dispose();
 
         Directory.Delete(downloadFolder, true);
         try
@@ -600,12 +627,15 @@ namespace TwitchArchiverWPF
             gridStreamer.StreamCount++;
           PageVods.RefreshVods();
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in DownloadTask near RefreshVods");
+        }
       }
       catch (Exception ex)
       {
         Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Fatal error downloading stream: " + ex.ToString());
-        logger.Fatal("Fatal error downloading stream: " + ex.ToString());
+        downloadLogger.Fatal("Fatal error downloading stream: " + ex.ToString());
       }
     }
 
@@ -679,7 +709,10 @@ namespace TwitchArchiverWPF
           string timeLine = firstPlaylist.Split('\n').First(x => x.Contains("#EXT-X-PROGRAM-DATE-TIME:"));
           start = DateTimeOffset.Parse(timeLine.Substring("#EXT-X-PROGRAM-DATE-TIME:".Length)).ToUnixTimeSeconds();
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in DownloadLiveChatTask when setting up headers");
+        }
       }
 
       client.Connect();
@@ -872,7 +905,10 @@ namespace TwitchArchiverWPF
             }
           }
         }
-        catch { }
+        catch (Exception ex)
+        {
+          LogError(ex, "Error in GetVodPlaylistUrl");
+        }
         tryCount++;
       }
       return null;
@@ -911,7 +947,14 @@ namespace TwitchArchiverWPF
             }
           }
         }
-        catch (WebException) { }
+        catch (WebException ex)
+        {
+          LogError(ex, "WebException in DownloadVodTask");
+        }
+        catch (Exception ex)
+        {
+          LogError(ex, "Exception in DownloadVodTask");
+        }
 
         using WebClient client = new WebClient();
         try
@@ -950,7 +993,10 @@ namespace TwitchArchiverWPF
               }
             }
           }
-          catch { }
+          catch (Exception ex)
+          {
+            LogError(ex, "Error in DownloadVodTask in VOD Deleted section");
+          }
         }
 
         Thread.Sleep(10000);
@@ -976,7 +1022,10 @@ namespace TwitchArchiverWPF
             {
               File.Delete(file);
             }
-            catch { }
+            catch (Exception ex)
+            {
+              LogError(ex, $"Error deleting file {file}");
+            }
           }
         }
       }
@@ -1003,8 +1052,7 @@ namespace TwitchArchiverWPF
       }
       catch (Exception ex)
       {
-        Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Error");
-        Console.WriteLine(ex);
+        LogError(ex, "Error in DownloadVodTask");
       }
     }
     private static int FileNameCompare(string x, string y)
@@ -1083,7 +1131,10 @@ namespace TwitchArchiverWPF
               {
                 File.Delete(file);
               }
-              catch { }
+              catch (Exception ex)
+              {
+                LogError(ex, $"Error deleting file {file}");
+              }
             }
           }
         }
@@ -1170,6 +1221,18 @@ namespace TwitchArchiverWPF
         Console.WriteLine(ex);
       }
       return false;
+    }
+
+    public void LogInformation(string message)
+    {
+      Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - {message}");
+      mainLogger.Information(message);
+    }
+
+    public void LogError(Exception ex, string message)
+    {
+      Console.WriteLine($"{DateTime.Now.ToString(datePattern)} ERROR - {message}");
+      mainLogger.Error(ex, message);
     }
 
     [Conditional("DEBUG")]
