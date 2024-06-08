@@ -146,7 +146,9 @@ namespace TwitchArchiverWPF
                 }
                 catch (WebException ex)
                 {
-                  LogError(ex, "WebException");
+                  HttpWebResponse? res = (HttpWebResponse?)ex.Response;
+                  if (res == null || res.StatusCode != HttpStatusCode.NotFound)
+                    LogError(ex, "WebException");
                 }
               }
             }
@@ -949,7 +951,9 @@ namespace TwitchArchiverWPF
         }
         catch (WebException ex)
         {
-          LogError(ex, "WebException in DownloadVodTask");
+          HttpWebResponse? res = (HttpWebResponse?)ex.Response;
+          if (res == null || res.StatusCode != HttpStatusCode.NotFound)
+            LogError(ex, "WebException in DownloadVodTask");
         }
         catch (Exception ex)
         {
@@ -1109,6 +1113,10 @@ namespace TwitchArchiverWPF
             logger.Information("Detected streamer offline");
             isLive = false;
           }
+          else
+          {
+            LogError(ex, "WebException in DownloadLiveTask");
+          }
         }
         Thread.Sleep(1000);
       }
@@ -1217,8 +1225,9 @@ namespace TwitchArchiverWPF
       }
       catch (WebException ex)
       {
-        Console.WriteLine($"{DateTime.Now.ToString(datePattern)} - Web Exception");
-        Console.WriteLine(ex);
+        HttpWebResponse? res = (HttpWebResponse?)ex.Response;
+        if (res == null || res.StatusCode != HttpStatusCode.NotFound)
+          LogError(ex, "WebException in RefreshToken");
       }
       return false;
     }
