@@ -19,7 +19,7 @@
         <CheckBox x:Name="CheckOauth" IsEnabled="False" Content="Use Custom OAuth Token (Live)" HorizontalAlignment="Left" Margin="20,174,0,0" VerticalAlignment="Top" Checked="CheckOauth_Checked" Unchecked="CheckOauth_Unchecked"/>
         <hc:TextBox x:Name="TextOauth" IsEnabled="False" HorizontalAlignment="Left" Margin="20,197,0,0" TextWrapping="Wrap" VerticalAlignment="Top" Width="191" LostFocus="TextOauth_LostFocus"/>
         <hc:SimpleText Text="Check Live Every (s):" HorizontalAlignment="Left" Height="16" Margin="20,247,0,0" VerticalAlignment="Top" Width="139"/>
-        <hc:NumericUpDown IsEnabled="False" Value="3" x:Name="NumLive" Minimum="1"  HorizontalAlignment="Left" Margin="130,240,0,0" VerticalAlignment="Top" ValueChanged="NumLive_ValueChanged"/>
+        <hc:NumericUpDown IsEnabled="False" Value="30" x:Name="NumLive" Minimum="1"  HorizontalAlignment="Left" Margin="130,240,0,0" VerticalAlignment="Top" ValueChanged="NumLive_ValueChanged"/>
         <CheckBox x:Name="CheckOauthVod" IsEnabled="False" Content="Use Custom OAuth Token (VOD)" HorizontalAlignment="Left" Margin="20,277,0,0" VerticalAlignment="Top" Checked="CheckOauthVod_Checked" Unchecked="CheckOauthVod_Unchecked"/>
         <hc:TextBox x:Name="TextOauthVod" IsEnabled="False" HorizontalAlignment="Left" Margin="20,300,0,0" TextWrapping="Wrap" VerticalAlignment="Top" Width="190" LostFocus="TextOauthVod_LostFocus"/>
         <hc:Divider HorizontalAlignment="Left" Orientation="Vertical" Margin="237,95,0,0" VerticalAlignment="Top" Height="289" Width="13"/>
