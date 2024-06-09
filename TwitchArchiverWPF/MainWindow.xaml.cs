@@ -129,7 +129,9 @@ namespace TwitchArchiverWPF
                     playlistList = playlistClient.DownloadString("https://api.ttv.lol/playlist/" + HttpUtility.UrlEncode($"{streamer.Name.ToLower()}.m3u8?allow_source=true&fast_bread=true&player_backend=mediaplayer&playlist_include_framerate=true&sig={accessTokens[streamer.Id].signature}&token={accessTokens[streamer.Id].value}")).Split('\n');
                   }
                   else
+                  {
                     playlistList = playlistClient.DownloadString($"https://usher.ttvnw.net/api/channel/hls/{streamer.Name.ToLower()}.m3u8?allow_source=true&fast_bread=true&player_backend=mediaplayer&playlist_include_framerate=true&sig={accessTokens[streamer.Id].signature}&token={HttpUtility.UrlEncode(accessTokens[streamer.Id].value)}").Split('\n');
+                  }
                   string streamId = playlistList.First(x => x.Contains("BROADCAST-ID=")).Split(',').First(x => x.Contains("BROADCAST-ID=")).Replace("BROADCAST-ID=", "").Replace("\"", "");
                   double serverTime = double.Parse(playlistList.First(x => x.Contains("SERVER-TIME=")).Split(',').First(x => x.Contains("SERVER-TIME=")).Replace("SERVER-TIME=", "").Replace("\"", ""));
                   double streamTime = double.Parse(playlistList.First(x => x.Contains("STREAM-TIME=")).Split(',').First(x => x.Contains("STREAM-TIME=")).Replace("STREAM-TIME=", "").Replace("\"", ""));
@@ -403,17 +405,24 @@ namespace TwitchArchiverWPF
           if (vodTask != null)
             vodTask.Wait();
           streamMetadata.VodStreamPath = Path.GetRelativePath(finalFolder, Path.Combine(finalFolder, "VOD", "vod.mp4"));
-          ShellFile shellFile = ShellFile.FromFilePath(Path.Combine(downloadFolder, "VOD", "vod.mp4"));
-          if (streamMetadata.Thumbnail == null)
+          if (File.Exists(streamMetadata.VodStreamPath))
           {
-            using MemoryStream ms = new MemoryStream();
-            shellFile.Thumbnail.LargeBitmap.Save(ms, ImageFormat.Png);
-            streamMetadata.Thumbnail = Convert.ToBase64String(ms.ToArray());
+            ShellFile shellFile = ShellFile.FromFilePath(Path.Combine(downloadFolder, "VOD", "vod.mp4"));
+            if (streamMetadata.Thumbnail == null)
+            {
+              using MemoryStream ms = new MemoryStream();
+              shellFile.Thumbnail.LargeBitmap.Save(ms, ImageFormat.Png);
+              streamMetadata.Thumbnail = Convert.ToBase64String(ms.ToArray());
+            }
+            long? timeTicks = (long?)shellFile.Properties.System.Media.Duration.Value;
+            if (timeTicks != null)
+            {
+              streamMetadata.Length = (int)TimeSpan.FromTicks((long)timeTicks).TotalSeconds;
+            }
           }
-          long? timeTicks = (long?)shellFile.Properties.System.Media.Duration.Value;
-          if (timeTicks != null)
+          else
           {
-            streamMetadata.Length = (int)TimeSpan.FromTicks((long)timeTicks).TotalSeconds;
+            LogInformation($"VodTask {streamId} - vod.mp4 does not exist");
           }
         }
         catch (Exception ex)
@@ -501,20 +510,27 @@ namespace TwitchArchiverWPF
           if (liveTask != null)
             liveTask.Wait();
           streamMetadata.LiveStreamPath = Path.GetRelativePath(finalFolder, Path.Combine(finalFolder, "Live", "live.mp4"));
-          ShellFile shellFile = ShellFile.FromFilePath(Path.Combine(downloadFolder, "Live", "live.mp4"));
-          if (streamMetadata.Thumbnail == null)
+          if (File.Exists(streamMetadata.LiveStreamPath))
           {
-            using MemoryStream ms = new MemoryStream();
-            shellFile.Thumbnail.LargeBitmap.Save(ms, ImageFormat.Png);
-            streamMetadata.Thumbnail = Convert.ToBase64String(ms.ToArray());
+            ShellFile shellFile = ShellFile.FromFilePath(Path.Combine(downloadFolder, "Live", "live.mp4"));
+            if (streamMetadata.Thumbnail == null)
+            {
+              using MemoryStream ms = new MemoryStream();
+              shellFile.Thumbnail.LargeBitmap.Save(ms, ImageFormat.Png);
+              streamMetadata.Thumbnail = Convert.ToBase64String(ms.ToArray());
+            }
+            long? timeTicks = (long?)shellFile.Properties.System.Media.Duration.Value;
+            if (timeTicks != null)
+            {
+              //Live could be longer than VOD or reverse, so set length to longer one
+              int videoLength = (int)TimeSpan.FromTicks((long)timeTicks).TotalSeconds;
+              if (videoLength > streamMetadata.Length)
+                streamMetadata.Length = videoLength;
+            }
           }
-          long? timeTicks = (long?)shellFile.Properties.System.Media.Duration.Value;
-          if (timeTicks != null)
+          else
           {
-            //Live could be longer than VOD or reverse, so set length to longer one
-            int videoLength = (int)TimeSpan.FromTicks((long)timeTicks).TotalSeconds;
-            if (videoLength > streamMetadata.Length)
-              streamMetadata.Length = videoLength;
+            LogInformation($"LiveTask {streamId} - live.mp4 does not exist");
           }
         }
         catch (Exception ex)
