@@ -79,7 +79,7 @@ namespace TwitchArchiverWPF
       Dictionary<string, AccessToken> accessTokens = new Dictionary<string, AccessToken>();
       Dictionary<string, Broadcast> broadcastList = new Dictionary<string, Broadcast>();
       int checkCount = 0;
-      using Logger bgWorkerLogger = new LoggerConfiguration().WriteTo.File(Path.Combine(Settings.Settings.Default.TempFolder, ".log", $"{DateTime.Now.ToString(fileDatePattern)}.log")).CreateLogger();
+      using Logger bgWorkerLogger = new LoggerConfiguration().WriteTo.File(Path.Combine(Settings.Settings.Default.TempFolder, ".log", $"Main_{DateTime.Now.ToString(fileDatePattern)}.log")).CreateLogger();
       mainLogger = bgWorkerLogger;
 
       while (true)
@@ -103,7 +103,7 @@ namespace TwitchArchiverWPF
             if (checkCount % liveCheck == 0)
             {
               bool updatedToken = true;
-              DateTime expireCheck = DateTime.Now.AddMinutes(5).AddSeconds(liveCheck);
+              DateTime expireCheck = DateTime.Now.AddSeconds(liveCheck > 300 ? liveCheck : 300); // 5min or next LiveCheck, whichever is longer
               if (!accessTokens.ContainsKey(streamer.Id) || accessTokens[streamer.Id].expires < expireCheck)
               {
                 updatedToken = RefreshToken(streamer, accessTokens, globalSettings);
@@ -197,7 +197,7 @@ namespace TwitchArchiverWPF
 
       string format = CultureInfo.CurrentCulture.DateTimeFormat.ShortDatePattern;
       string dateString = DateTime.Now.ToString(format).Replace("/", "-");
-      string downloadFolder = Path.Combine(Settings.Settings.Default.TempFolder, $"Download_{streamId}");
+      string downloadFolder = Path.Combine(Settings.Settings.Default.TempFolder, $"Download_{streamer.Name}_{streamId}");
       string finalFolder = Path.Combine(Settings.Settings.Default.SaveFolder, streamerFolder, $"{dateString}_{streamId}");
       string liveDirectory = Path.Combine(downloadFolder, "Live");
       string vodDirectory = Path.Combine(downloadFolder, "VOD");
@@ -1243,7 +1243,7 @@ namespace TwitchArchiverWPF
 
             accessTokens[streamer.Id].value = response.data.streamPlaybackAccessToken.value;
             accessTokens[streamer.Id].signature = response.data.streamPlaybackAccessToken.signature;
-            accessTokens[streamer.Id].expires = DateTimeOffset.FromUnixTimeSeconds((long)tokenValue.expires).DateTime;
+            accessTokens[streamer.Id].expires = DateTimeOffset.FromUnixTimeSeconds((long)tokenValue.expires).DateTime.ToLocalTime();
             return true;
           }
         }
