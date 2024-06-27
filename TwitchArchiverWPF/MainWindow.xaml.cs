@@ -222,7 +222,7 @@ namespace TwitchArchiverWPF
         string? vodId = null;
         string? firstPlaylist = null;
 
-        infoTask = new Task<StreamInfoTaskResponse>(() => DownloadInfoTask(streamer, infoCancel.Token));
+        infoTask = Task.Run<StreamInfoTaskResponse>(() => DownloadInfoTask(streamer, infoCancel.Token, downloadLogger));
 
         if (streamer.DownloadOptions.DownloadLiveStream && streamer.DownloadOptions.DownloadLiveChat)
         {
@@ -669,8 +669,9 @@ namespace TwitchArchiverWPF
       }
     }
 
-    private StreamInfoTaskResponse DownloadInfoTask(Streamer streamer, CancellationToken token)
+    private StreamInfoTaskResponse DownloadInfoTask(Streamer streamer, CancellationToken token, ILogger downloadLogger)
     {
+      LogDebug("DownloadInfoTask STARTED", downloadLogger);
       StreamInfoTaskResponse resData = new StreamInfoTaskResponse();
       while (!token.IsCancellationRequested)
       {
@@ -688,25 +689,37 @@ namespace TwitchArchiverWPF
               if (resData.Title == null && streamInfo.data.user.stream.title != null)
               {
                 resData.Title = streamInfo.data.user.stream.title;
+                LogDebug($"DownloadInfoTask Setting ResData.Title to Stream Title: {resData.Title}", downloadLogger);
               }
               if (streamInfo.data.user.stream.game != null && streamInfo.data.user.stream.game.name != null)
               {
                 string game = streamInfo.data.user.stream.game.name!;
+                LogDebug($"DownloadInfoTask found stream game {game}", downloadLogger);
                 if (!resData.Games.Contains(game))
+                {
+                  LogDebug("DownloadInfoTask Adding stream game to ResData", downloadLogger);
                   resData.Games.Add(game);
+                }
               }
             }
 
             if (resData.Title == null && streamInfo.data.user.broadcastSettings != null && streamInfo.data.user.broadcastSettings.title != null)
             {
               resData.Title = streamInfo.data.user.broadcastSettings.title;
+              LogDebug($"DownloadInfoTask Setting ResData.Title to Broadcast Title: {resData.Title}", downloadLogger);
             }
           }
         }
+        else
+        {
+          LogDebug($"DownloadInfoTask StreamInfo was null", downloadLogger);
+        }
 
+        LogDebug("DownloadInfoTask Sleep", downloadLogger);
         Thread.Sleep(60000);
       }
 
+      LogDebug("DownloadInfoTask ENDED", downloadLogger);
       return resData;
     }
 
@@ -1279,6 +1292,14 @@ namespace TwitchArchiverWPF
       string logMessage = $"ThreadId {Thread.CurrentThread.ManagedThreadId} - {message}";
       Trace.WriteLine($"{DateTime.Now.ToString(logDatePattern)} [DBG] " + logMessage);
       (logger ?? mainLogger)?.Debug(logMessage);
+    }
+
+    [Conditional("VERBOSE")]
+    public void LogVerbose(string message, ILogger logger = null)
+    {
+      string logMessage = $"ThreadId {Thread.CurrentThread.ManagedThreadId} - {message}";
+      Trace.WriteLine($"{DateTime.Now.ToString(logDatePattern)} [VRB] " + logMessage);
+      (logger ?? mainLogger)?.Verbose(logMessage);
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
